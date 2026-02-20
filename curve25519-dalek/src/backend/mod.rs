@@ -71,7 +71,7 @@ fn get_selected_backend() -> (result: BackendKind)
     ensures
         matches!(result, BackendKind::Serial),
 {
-    // Armin Test 2
+    // Armin Test 3
     // #[cfg(all(curve25519_dalek_backend = "simd", nightly))]
     // {
     //     cpufeatures::new!(cpuid_avx512, "avx512ifma", "avx512vl");
