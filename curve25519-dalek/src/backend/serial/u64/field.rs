@@ -164,7 +164,7 @@ fn m(x: u64, y: u64) -> (r: u128)
         r <= u128::MAX,
 {
     proof {
-        // Test Armin
+        // Test Armin - after reclone
         // if a <= a' and b <= b' then ab <= a'b'
         lemma_mul_le(x as nat, u64::MAX as nat, y as nat, u64::MAX as nat);
     }
