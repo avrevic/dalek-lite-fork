@@ -1,0 +1,11 @@
+{
+  "auto-validate-specs": false,
+  "docker-image": "ghcr.io/beneficial-ai-foundation/verilib-cli:latest",
+  "execution-mode": "local",
+  "repo": {
+    "id": "4487",
+    "is_admin": true,
+    "url": "http://ec2-3-23-60-0.us-east-2.compute.amazonaws.com/"
+  },
+  "structure-root": ".verilib/structure"
+}
