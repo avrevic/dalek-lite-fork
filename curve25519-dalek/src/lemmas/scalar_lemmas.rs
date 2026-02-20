@@ -1,6 +1,8 @@
 #[allow(unused_imports)]
 use super::super::specs::core_specs::*;
 #[allow(unused_imports)]
+use super::common_lemmas::div_mod_lemmas::*;
+#[allow(unused_imports)]
 use super::common_lemmas::*;
 #[allow(unused_imports)]
 use crate::backend::serial::u64::constants;
@@ -27,6 +29,8 @@ use vstd::prelude::*;
 use super::common_lemmas::bit_lemmas::*;
 #[allow(unused_imports)]
 use super::common_lemmas::mul_lemmas::*;
+#[allow(unused_imports)]
+use super::common_lemmas::number_theory_lemmas::*;
 #[allow(unused_imports)]
 use super::common_lemmas::pow_lemmas::*;
 #[allow(unused_imports)]
@@ -782,6 +786,43 @@ pub proof fn lemma_rr_limbs_bounded()
     assert(0x000d63c715bea69fu64 < (1u64 << 52)) by (bit_vector);
 }
 
+/// Proves that constants::L has limbs_bounded
+pub(crate) proof fn lemma_l_limbs_bounded()
+    ensures
+        limbs_bounded(&crate::backend::serial::u64::constants::L),
+{
+    // L = [0x0002631a5cf5d3ed, 0x000dea2f79cd6581, 0x000000000014def9, 0x0000000000000000, 0x0000100000000000]
+    // All limbs are clearly < 2^52
+    assert(0x0002631a5cf5d3edu64 < (1u64 << 52)) by (bit_vector);
+    assert(0x000dea2f79cd6581u64 < (1u64 << 52)) by (bit_vector);
+    assert(0x000000000014def9u64 < (1u64 << 52)) by (bit_vector);
+    assert(0x0000000000000000u64 < (1u64 << 52)) by (bit_vector);
+    assert(0x0000100000000000u64 < (1u64 << 52)) by (bit_vector);
+}
+
+/// Backwards compatibility lemma: limbs_bounded implies limbs_bounded_for_sub
+///
+/// This ensures that existing callers of sub that provide bounded inputs
+/// still satisfy the relaxed precondition.
+pub proof fn lemma_limbs_bounded_implies_limbs_bounded_for_sub(a: &Scalar52, b: &Scalar52)
+    requires
+        limbs_bounded(a),
+        limbs_bounded(b),
+    ensures
+        limbs_bounded_for_sub(a, b),
+{
+    // limbs_bounded(a) means forall|i| 0 <= i < 5 ==> a.limbs[i] < 2^52
+    // limbs_bounded_for_sub requires:
+    //   - forall|i| 0 <= i < 4 ==> a.limbs[i] < 2^52  (satisfied by limbs_bounded)
+    //   - a.limbs[4] < 2^52 + b.limbs[4]
+    //
+    // Since a.limbs[4] < 2^52 and b.limbs[4] >= 0, we have:
+    // a.limbs[4] < 2^52 <= 2^52 + b.limbs[4]
+    assert(a.limbs[4] < (1u64 << 52));
+    assert(b.limbs[4] >= 0);
+    assert(a.limbs[4] < (1u64 << 52) + b.limbs[4]);
+}
+
 pub proof fn lemma_cancel_mul_montgomery_mod(x: nat, a: nat, rr: nat)
     requires
         ((x * montgomery_radix()) % group_order()) == ((a * rr) % group_order()),
@@ -812,6 +853,17 @@ pub proof fn lemma_cancel_mul_montgomery_mod(x: nat, a: nat, rr: nat)
     // 2. use the inverse to remove r from both sides
 
     // Step 1: Multiply both sides by inv_montgomery_radix() using modular properties
+    // We know: (x * R) % L == (a * R * R) % L
+    // We want: (x * R * R^-1) % L == (a * R * R * R^-1) % L
+
+    // Use associativity to rewrite as (R^-1 * (x * R)) and (R^-1 * (a * R * R))
+    lemma_mul_is_commutative((x * montgomery_radix()) as int, inv_montgomery_radix() as int);
+    lemma_mul_is_commutative(
+        (a * montgomery_radix() * montgomery_radix()) as int,
+        inv_montgomery_radix() as int,
+    );
+
+    // Now apply: if (A % n) == (B % n), then (c * A) % n == (c * B) % n
     lemma_mul_mod_noop_right(
         inv_montgomery_radix() as int,
         (x * montgomery_radix()) as int,
@@ -822,6 +874,41 @@ pub proof fn lemma_cancel_mul_montgomery_mod(x: nat, a: nat, rr: nat)
         (a * montgomery_radix() * montgomery_radix()) as int,
         group_order() as int,
     );
+
+    let L = group_order();
+    let R = montgomery_radix();
+    let R_inv = inv_montgomery_radix();
+
+    assert(((x * R) as int) % (L as int) == ((a * R * R) as int) % (L as int)) by {
+        lemma_int_nat_mod_equiv((x * R) as int, L);
+        lemma_int_nat_mod_equiv((a * R * R) as int, L);
+    }
+
+    assert(((R_inv * (x * R)) as int) % (L as int) == ((R_inv * (a * R * R)) as int) % (L as int))
+        by {
+        lemma_mul_factors_congruent_implies_products_congruent(
+            R_inv as int,
+            (x * R) as int,
+            (a * R * R) as int,
+            L as int,
+        );
+    }
+
+    assert((R_inv * (x * R)) % L == (R_inv * (a * R * R)) % L) by {
+        lemma_int_nat_mod_equiv((R_inv * (x * R)) as int, L);
+        lemma_int_nat_mod_equiv((R_inv * (a * R * R)) as int, L);
+    }
+
+    assert((x * R * R_inv) % L == (R_inv * (x * R)) % L) by {
+        lemma_mul_is_commutative(R_inv as int, (x * R) as int);
+    }
+    assert((a * R * R * R_inv) % L == (R_inv * (a * R * R)) % L) by {
+        lemma_mul_is_commutative(R_inv as int, (a * R * R) as int);
+    }
+    assert((x * R * R_inv) % L == (a * R * R * R_inv) % L);
+    // Both sides equal when multiplied by R^-1
+    assert((inv_montgomery_radix() * (x * montgomery_radix())) % group_order() == (
+    inv_montgomery_radix() * (a * montgomery_radix() * montgomery_radix())) % group_order());
 
     assert((x * montgomery_radix() * inv_montgomery_radix()) % group_order() == (a
         * montgomery_radix() * montgomery_radix() * inv_montgomery_radix()) % group_order());
@@ -880,6 +967,24 @@ pub proof fn lemma_montgomery_inverse()
 
 }
 
+/// Montgomery radix is nonzero modulo group_order.
+/// Follows from R * R^{-1} ≡ 1 (mod L) by contradiction.
+pub proof fn lemma_montgomery_radix_nonzero_mod_group_order()
+    ensures
+        montgomery_radix() % group_order() != 0,
+{
+    lemma_montgomery_inverse();
+    if montgomery_radix() % group_order() == 0 {
+        assert((montgomery_radix() * inv_montgomery_radix()) % group_order() == 0) by {
+            lemma_mul_mod_noop(
+                montgomery_radix() as int,
+                inv_montgomery_radix() as int,
+                group_order() as int,
+            );
+        }
+    }
+}
+
 pub(crate) proof fn lemma_r_equals_spec(r: Scalar52)
     requires
         r == (Scalar52 {
@@ -918,22 +1023,13 @@ pub(crate) proof fn lemma_r_equals_spec(r: Scalar52)
     }
 }
 
-pub(crate) proof fn lemma_rr_equals_spec(rr: Scalar52)
-    requires
-        rr == (Scalar52 {
-            limbs: [
-                0x0009d265e952d13b,
-                0x000d63c715bea69f,
-                0x0005be65cb687604,
-                0x0003dceec73d217f,
-                0x000009411b7c309a,
-            ],
-        }),
+pub(crate) proof fn lemma_rr_equals_spec()
     ensures
-        scalar52_to_nat(&rr) % group_order() == (montgomery_radix() * montgomery_radix())
+        scalar52_to_nat(&constants::RR) % group_order() == (montgomery_radix() * montgomery_radix())
             % group_order(),
-        scalar52_to_nat(&rr) < group_order(),
+        scalar52_to_nat(&constants::RR) < group_order(),
 {
+    let rr = constants::RR;
     lemma_five_limbs_equals_to_nat(&rr.limbs);
 
     lemma2_to64_rest();
@@ -1270,6 +1366,9 @@ pub proof fn lemma_decompose(a: u64, mask: u64)
 /// the maximum amount.
 /// Either way, we then use the preconditions about what was mutated,
 /// and shuffle around the powers of 52.
+///
+/// PRECONDITION RELAXATION: Uses `limbs_bounded_for_sub(a, b)` instead of `limbs_bounded(a)`.
+/// This allows a.limbs[4] to exceed 2^52 (up to 2^52 + b.limbs[4]).
 pub proof fn lemma_sub_loop1_invariant(
     difference: Scalar52,
     borrow: u64,
@@ -1281,7 +1380,7 @@ pub proof fn lemma_sub_loop1_invariant(
     difference_loop1_start: Scalar52,
 )
     requires
-        limbs_bounded(a),
+        limbs_bounded_for_sub(a, b),
         limbs_bounded(b),
         0 <= i < 5,
         forall|j: int| 0 <= j < i ==> difference.limbs[j] < (1u64 << 52),
@@ -1460,11 +1559,24 @@ pub proof fn lemma_sub_loop1_invariant(
                         52 * (i + 1) as nat,
                     ) + difference.limbs[i as int] * pow2(52 * i as nat); {
                         lemma_seq_u64_to_nat_subrange_extend(difference.limbs@, i as int);
+                        // borrow < 2^52 in the no-underflow case
+                        // Uses relaxed bound: limbs_bounded_for_sub(a, b)
+                        // For i < 4: a.limbs[i] < 2^52, so borrow <= a.limbs[i] < 2^52
+                        // For i == 4: a.limbs[4] < 2^52 + b.limbs[4], so
+                        //   borrow = a.limbs[4] - b.limbs[4] - old_borrow < 2^52
                         assert(borrow < 1u64 << 52) by {
                             assert(borrow == (a.limbs[i as int] - ((b.limbs[i as int] + (old_borrow
                                 >> 63)) as u64)) as u64);
-                            assert(a.limbs[i as int] < (1u64 << 52));
-                            assert((b.limbs[i as int] + (old_borrow >> 63)) as u64 >= 0);
+                            assert(old_borrow >> 63 <= 1) by (bit_vector);
+                            if i < 4 {
+                                // For i < 4: a.limbs[i] < 2^52 from limbs_bounded_for_sub
+                                assert(a.limbs[i as int] < (1u64 << 52));
+                            } else {
+                                // For i == 4: a.limbs[4] < 2^52 + b.limbs[4] from limbs_bounded_for_sub
+                                // So a.limbs[4] - b.limbs[4] < 2^52
+                                assert(a.limbs[4] < (1u64 << 52) + b.limbs[4]);
+                                assert(b.limbs[4] < (1u64 << 52));  // from limbs_bounded(b)
+                            }
                         }
                         assert(borrow >> 52 == 0) by (bit_vector)
                             requires
@@ -1546,6 +1658,8 @@ pub proof fn lemma_pow2_260_greater_than_2_group_order()
 /// 0 and group order.
 /// If borrow >> 63 == 1, we apply (1) to show that carry >> 52 can't be 0.
 /// This makes the excess terms in the borrow >> 63 == 1 precondition disappear
+///
+/// PRECONDITION RELAXATION: Uses `limbs_bounded_for_sub(a, b)` instead of `limbs_bounded(a)`.
 pub(crate) proof fn lemma_sub_correct_after_loops(
     difference: Scalar52,
     carry: u64,
@@ -1555,7 +1669,7 @@ pub(crate) proof fn lemma_sub_correct_after_loops(
     borrow: u64,
 )
     requires
-        limbs_bounded(a),
+        limbs_bounded_for_sub(a, b),
         limbs_bounded(b),
         limbs_bounded(&difference),
         limbs_bounded(&difference_after_loop1),
@@ -2037,7 +2151,7 @@ pub proof fn lemma_add_sum_simplify(a: &Scalar52, b: &Scalar52, sum: &Scalar52, 
     assert(scalar52_to_nat(&sum) < 2 * group_order());
 }
 
-// NOTE: lemma_bytes32_to_nat_lower_bound has been moved to common_lemmas/to_nat_lemmas.rs
+// NOTE: lemma_u8_32_as_nat_lower_bound has been moved to common_lemmas/to_nat_lemmas.rs
 /// Proof that the group order is less than 2^255
 pub proof fn lemma_group_order_bound()
     ensures
@@ -2124,124 +2238,156 @@ pub proof fn lemma_group_order_is_odd()
     assert(group_order() % 2 == 1);
 }
 
-// Proof that (a * R) % group_order() == (b * R) % group_order ==> a % group_order() == b % group_order()
+// =============================================================================
+// Coprime Factor Cancellation Lemmas
+// =============================================================================
+// These lemmas allow canceling a factor from modular congruences when the factor
+// and modulus are coprime (gcd = 1). They are fundamental to Montgomery reduction.
+//
+// General lemma: lemma_cancel_coprime_factor
+// Symmetric specializations:
+//   - lemma_cancel_mul_R_mod_L: cancels R (2^260) from congruences mod L (group_order)
+//   - lemma_cancel_mul_L_mod_R: cancels L (group_order) from congruences mod R (2^260)
+// =============================================================================
+/// General coprime factor cancellation lemma.
+///
+/// If gcd(factor, modulus) = 1 and (a * factor) ≡ (b * factor) (mod modulus),
+/// then a ≡ b (mod modulus).
+///
+/// Proof: Since gcd(factor, modulus) = 1, factor has a multiplicative inverse mod modulus.
+/// Multiply both sides by this inverse to cancel the factor.
+pub proof fn lemma_cancel_coprime_factor(a: nat, b: nat, factor: nat, modulus: nat)
+    requires
+        modulus > 1,
+        spec_gcd(factor % modulus, modulus) == 1,
+        (a * factor) % modulus == (b * factor) % modulus,
+    ensures
+        a % modulus == b % modulus,
+{
+    // Get the modular inverse of factor
+    let inv = spec_mod_inverse(factor, modulus);
+    lemma_mod_inverse_correct(factor, modulus);
+    // Now: (factor * inv) % modulus == 1 and inv < modulus
+
+    // Step 1: Multiply both sides by inv
+    // (inv * a * factor) % modulus == (inv * b * factor) % modulus
+    lemma_mul_factors_congruent_implies_products_congruent(
+        inv as int,
+        (a * factor) as int,
+        (b * factor) as int,
+        modulus as int,
+    );
+    // Now: (inv * (a * factor)) % modulus == (inv * (b * factor)) % modulus
+
+    // Step 2: Regroup using associativity: (a * (inv * factor)) % modulus == (b * (inv * factor)) % modulus
+    assert(inv * (a * factor) == a * (inv * factor)) by {
+        lemma_mul_is_associative(inv as int, a as int, factor as int);
+        lemma_mul_is_commutative(inv as int, a as int);
+        lemma_mul_is_associative(a as int, inv as int, factor as int);
+    }
+
+    assert(inv * (b * factor) == b * (inv * factor)) by {
+        lemma_mul_is_associative(inv as int, b as int, factor as int);
+        lemma_mul_is_commutative(inv as int, b as int);
+        lemma_mul_is_associative(b as int, inv as int, factor as int);
+    }
+
+    // Step 3: Since (inv * factor) % modulus == 1, we have:
+    // (a * (inv * factor)) % modulus == a % modulus
+    lemma_mul_mod_noop_right(a as int, (inv * factor) as int, modulus as int);
+    assert((a * (inv * factor)) % modulus == (a * ((inv * factor) % modulus)) % modulus);
+    assert((inv * factor) % modulus == 1) by {
+        lemma_mul_is_commutative(inv as int, factor as int);
+    };
+    assert((a * 1) == a) by { lemma_mul_basics(a as int) };
+
+    lemma_mul_mod_noop_right(b as int, (inv * factor) as int, modulus as int);
+    assert((b * 1) == b) by { lemma_mul_basics(b as int) };
+
+    // Step 4: Chain: a % modulus == b % modulus
+    assert((a * (inv * factor)) % modulus == (b * (inv * factor)) % modulus);
+    assert(a % modulus == b % modulus);
+}
+
+/// Cancels R (montgomery_radix = 2^260) from congruences mod L (group_order).
+///
+/// If (a * R) % L == (b * R) % L, then a % L == b % L.
+/// This works because gcd(R, L) = 1 (R is a power of 2, L is odd).
+///
+/// Symmetric to `lemma_cancel_mul_L_mod_R`.
+pub proof fn lemma_cancel_mul_R_mod_L(a: nat, b: nat)
+    requires
+        (a * montgomery_radix()) % group_order() == (b * montgomery_radix()) % group_order(),
+    ensures
+        a % group_order() == b % group_order(),
+{
+    let r = montgomery_radix();
+    let l = group_order();
+
+    // Establish L > 1
+    lemma_group_order_bound();
+    assert(l > 1);
+
+    // Establish gcd(R % L, L) == 1
+    // R = 2^260, L is odd, so gcd(R, L) = 1
+    // This requires showing gcd(2^260 % L, L) = 1
+    assert(spec_gcd(r % l, l) == 1) by {
+        // L is odd (has no factor of 2)
+        lemma_group_order_is_odd();
+        // R = 2^260 (only factor is 2)
+        // Therefore gcd(R, L) = 1, and gcd(R % L, L) = gcd(R, L) = 1
+        axiom_gcd_mod_noop(r, l);
+        axiom_gcd_pow2_odd(260, l);
+    };
+
+    lemma_cancel_coprime_factor(a, b, r, l);
+}
+
+/// Cancels L (group_order) from congruences mod R (montgomery_radix = 2^260).
+///
+/// If (a * L) % R == (b * L) % R, then a % R == b % R.
+/// This works because gcd(L, R) = 1 (L is odd, R is a power of 2).
+///
+/// Symmetric to `lemma_cancel_mul_R_mod_L`.
+pub proof fn lemma_cancel_mul_L_mod_R(a: nat, b: nat)
+    requires
+        (a * group_order()) % montgomery_radix() == (b * group_order()) % montgomery_radix(),
+    ensures
+        a % montgomery_radix() == b % montgomery_radix(),
+{
+    let r = montgomery_radix();
+    let l = group_order();
+
+    // Establish R > 1
+    // pow2(260) = 2^260 > 2^1 = 2 > 1
+    lemma_pow2_strictly_increases(1, 260);
+    lemma2_to64();  // proves pow2(1) == 2
+    assert(r > 1);
+
+    // Establish gcd(L % R, R) == 1
+    assert(spec_gcd(l % r, r) == 1) by {
+        lemma_group_order_is_odd();
+        axiom_gcd_mod_noop(l, r);
+        // gcd(L, R) = gcd(L, 2^260) = 1 since L is odd
+        axiom_gcd_symmetric(l, r);
+        axiom_gcd_pow2_odd(260, l);
+        axiom_gcd_symmetric(pow2(260), l);
+    };
+
+    lemma_cancel_coprime_factor(a, b, l, r);
+}
+
+/// Backward-compatible alias for lemma_cancel_mul_R_mod_L.
+///
+/// DEPRECATED: Use lemma_cancel_mul_R_mod_L instead for clarity.
 pub proof fn lemma_cancel_mul_pow2_mod(a: nat, b: nat, r_pow: nat)
     requires
-// r_pow is a power of two, and r_pow and group_order are coprime
-// (montgomery_radix() is 2^260; group_order() is odd)
-
         r_pow == pow2(260),
         (a * r_pow) % group_order() == (b * r_pow) % group_order(),
     ensures
         a % group_order() == b % group_order(),
 {
-    // Constructive proof using inverse-of-2 modulo L.
-    let L = group_order();
-
-    lemma_group_order_is_odd();
-
-    // Define inv2 = (L + 1) / 2
-    let inv2 = (L + 1) / 2;
-
-    // From division: (L + 1) == 2 * ((L + 1) / 2) + (L + 1) % 2
-    lemma_fundamental_div_mod((L + 1) as int, 2);
-    // Since L is odd, (L + 1) % 2 == 0, so 2 * inv2 == L + 1
-    assert(2 * inv2 == L + 1);
-
-    // inv_pow = inv2^260
-    let inv_pow = pow(inv2 as int, 260);
-
-    // Multiply given congruence (a * r_pow) ≡ (b * r_pow) (mod L) by inv_pow
-    lemma_mul_factors_congruent_implies_products_congruent(
-        inv_pow as int,
-        (a * r_pow) as int,
-        (b * r_pow) as int,
-        L as int,
-    );
-
-    // So (inv_pow * a * r_pow) % L == (inv_pow * b * r_pow) % L.
-    // Show that (inv_pow * r_pow) % L == 1.
-
-    // First, (inv2 * 2) % L == 1
-    assert((inv2 * 2) % L == 1) by {
-        // we already have 2 * inv2 == L + 1
-        assert(2 * inv2 == L + 1);
-
-        // rewrite to (L + 1) % L
-        assert((2 * inv2) % L == (L + 1) % L);
-
-        // show group_order() > 1
-        // pow2(252) == 2 * pow2(251)
-        lemma_pow2_adds(1, 251);
-        assert(pow2(1) == 2) by { lemma2_to64() };
-        assert(pow2(252) == 2 * pow2(251));
-
-        // pow2(251) > 0  ==> pow2(252) >= 2
-        lemma_pow2_pos(251);
-        assert(pow2(251) > 0);
-        // since pow2(252) == 2 * pow2(251) and pow2(251) >= 1, pow2(252) >= 2
-        assert(pow2(252) >= 2);
-
-        // group_order() = pow2(252) + C, so group_order() >= pow2(252) >= 2
-        // (use compute / definition unfolding if needed)
-        assert(group_order() >= pow2(252));
-        assert(group_order() >= 2);
-        assert(group_order() > 1);
-
-        // Now L + 1 == L * 1 + 1 and 0 <= 1 < L, so remainder of (L+1) mod L is 1.
-        assert(L + 1 == L * 1 + 1);
-        assert(0 <= 1 && 1 < L);
-
-        // Use the converse lemma: if x == q * d + r and 0 <= r < d then r == x % d
-        lemma_fundamental_div_mod_converse((L + 1) as int, L as int, 1, 1);
-
-        assert((L + 1) % L == 1);
-    }
-
-    // pow((inv2 * 2), 260) % L == 1
-    lemma_pow_mod_one((inv2 * 2) as int, 260, L as int);
-
-    // pow(inv2 * 2, 260) == pow(inv2,260) * pow(2,260)
-    lemma_pow_distributes(inv2 as int, 2int, 260);
-
-    // Using the above, (pow(inv2,260) * pow(2,260)) % L == 1
-    // Note r_pow == pow2(260) == pow(2,260)
-
-    // Let c = inv_pow * r_pow
-    let c = (inv_pow * r_pow) as int;
-
-    // c % L == 1
-    assert(c % (L as int) == 1) by {
-        // pow(inv2,260) * pow(2,260) is congruent to 1
-        assert(pow(inv2 as int, 260) * pow(2 as int, 260) == pow((inv2 * 2) as int, 260));
-        assert((pow(inv2 as int, 260) * pow(2 as int, 260)) % (L as int) == 1);
-        assert(pow(2int, 260) == (pow2(260) as int)) by { lemma_pow2(260) };
-    }
-
-    assert(1int < L);
-    assert(1int % (L as int) == 1) by { lemma_small_mod(1nat, L) };
-
-    // (a * r_pow) % L = (b * r_pow) % L
-    lemma_mul_factors_congruent_implies_products_congruent(
-        inv_pow,
-        (a * r_pow) as int,
-        (b * r_pow) as int,
-        L as int,
-    );
-
-    assert(((a * r_pow) * inv_pow) % (L as int) == ((b * r_pow) * inv_pow) % (L as int));
-    assert(((a * r_pow) * inv_pow) % (L as int) == (a * (r_pow * inv_pow)) % (L as int)) by {
-        lemma_mul_is_associative(a as int, r_pow as int, inv_pow as int)
-    };
-
-    assert(((b * r_pow) * inv_pow) % (L as int) == (b * (r_pow * inv_pow)) % (L as int)) by {
-        lemma_mul_is_associative(b as int, r_pow as int, inv_pow as int)
-    };
-    // assert((a * (r_pow * inv_pow)) % (L as int) == (b * (r_pow * inv_pow)) % (L as int));
-
-    lemma_mul_factors_congruent_implies_products_congruent(a as int, c, 1, L as int);
-    lemma_mul_factors_congruent_implies_products_congruent(b as int, c, 1, L as int);
-
+    lemma_cancel_mul_R_mod_L(a, b);
 }
 
 // Proof that a % m == b % m ==> (c * a) % m == (c * b) % m
@@ -2306,36 +2452,36 @@ pub proof fn lemma_is_canonical_correctness(self_bytes: &[u8; 32], reduced_bytes
     requires
 // reduced is canonical
 
-        bytes32_to_nat(reduced_bytes) < group_order(),
+        u8_32_as_nat(reduced_bytes) < group_order(),
         // reduced has the same value mod group_order as self
-        bytes32_to_nat(reduced_bytes) % group_order() == bytes32_to_nat(self_bytes) % group_order(),
+        u8_32_as_nat(reduced_bytes) % group_order() == u8_32_as_nat(self_bytes) % group_order(),
     ensures
 // Bytes are equal iff self is canonical
 
-        (self_bytes == reduced_bytes) == (bytes32_to_nat(self_bytes) < group_order()),
+        (self_bytes == reduced_bytes) == (u8_32_as_nat(self_bytes) < group_order()),
 {
     if self_bytes == reduced_bytes {
         // Case 1: Bytes are equal
         // Then nat values are equal and self is canonical
-        assert(bytes32_to_nat(self_bytes) == bytes32_to_nat(reduced_bytes));
-        assert(bytes32_to_nat(self_bytes) < group_order());
+        assert(u8_32_as_nat(self_bytes) == u8_32_as_nat(reduced_bytes));
+        assert(u8_32_as_nat(self_bytes) < group_order());
     } else {
         // Case 2: Bytes differ
         // Step 1: Different bytes imply different nat values (by injectivity)
-        assert(bytes32_to_nat(reduced_bytes) != bytes32_to_nat(self_bytes)) by {
-            if bytes32_to_nat(reduced_bytes) == bytes32_to_nat(self_bytes) {
+        assert(u8_32_as_nat(reduced_bytes) != u8_32_as_nat(self_bytes)) by {
+            if u8_32_as_nat(reduced_bytes) == u8_32_as_nat(self_bytes) {
                 lemma_canonical_bytes_equal(reduced_bytes, self_bytes);
                 assert(reduced_bytes =~= self_bytes);  // contradiction
             }
         }
 
         // Step 2: Canonical value equals itself mod group_order
-        assert(bytes32_to_nat(reduced_bytes) == bytes32_to_nat(reduced_bytes) % group_order()) by {
+        assert(u8_32_as_nat(reduced_bytes) == u8_32_as_nat(reduced_bytes) % group_order()) by {
             lemma_fundamental_div_mod_converse_mod(
-                bytes32_to_nat(reduced_bytes) as int,
+                u8_32_as_nat(reduced_bytes) as int,
                 group_order() as int,
                 0int,
-                bytes32_to_nat(reduced_bytes) as int,
+                u8_32_as_nat(reduced_bytes) as int,
             );
         }
 
@@ -2343,14 +2489,13 @@ pub proof fn lemma_is_canonical_correctness(self_bytes: &[u8; 32], reduced_bytes
         // reduced == reduced % L (Step 2) and reduced % L == self % L (requires)
         // implies reduced == self % L, but reduced != self (Step 1)
         // therefore self % L != self
-        assert(bytes32_to_nat(self_bytes) % group_order() != bytes32_to_nat(self_bytes));
+        assert(u8_32_as_nat(self_bytes) % group_order() != u8_32_as_nat(self_bytes));
 
         // Step 4: By contradiction - if self_bytes < group_order, it would equal itself mod group_order
-        assert(!(bytes32_to_nat(self_bytes) < group_order())) by {
-            if bytes32_to_nat(self_bytes) < group_order() {
-                assert(bytes32_to_nat(self_bytes) % group_order() == bytes32_to_nat(self_bytes))
-                    by {
-                    lemma_small_mod(bytes32_to_nat(self_bytes), group_order());
+        assert(!(u8_32_as_nat(self_bytes) < group_order())) by {
+            if u8_32_as_nat(self_bytes) < group_order() {
+                assert(u8_32_as_nat(self_bytes) % group_order() == u8_32_as_nat(self_bytes)) by {
+                    lemma_small_mod(u8_32_as_nat(self_bytes), group_order());
                 }
             }
         }
@@ -2436,22 +2581,22 @@ pub proof fn lemma_square_multiply_step(new_y: nat, y_before: nat, y0: nat, R: n
     }
 }
 
-/// If bytes32_to_nat(bytes) < group_order(), then bytes[31] <= 127 (high bit is clear)
+/// If u8_32_as_nat(bytes) < group_order(), then bytes[31] <= 127 (high bit is clear)
 pub proof fn lemma_canonical_bytes_high_bit_clear(bytes: &[u8; 32])
     requires
-        bytes32_to_nat(bytes) < group_order(),
+        u8_32_as_nat(bytes) < group_order(),
     ensures
         bytes[31] <= 127,
 {
     lemma_group_order_bound();
-    // bytes32_to_nat < group_order < 2^255
+    // u8_32_as_nat < group_order < 2^255
     if bytes[31] >= 128 {
-        // bytes32_to_nat >= bytes[31] * 2^248 >= 128 * 2^248 = 2^255
-        lemma_bytes32_to_nat_lower_bound(bytes, 31);
+        // u8_32_as_nat >= bytes[31] * 2^248 >= 128 * 2^248 = 2^255
+        lemma_u8_32_as_nat_lower_bound(bytes, 31);
         lemma_pow2_adds(7, 248);
         lemma2_to64();
         lemma_mul_inequality(128, bytes[31] as int, pow2(248) as int);
-        // contradiction: bytes32_to_nat >= 2^255 > group_order
+        // contradiction: u8_32_as_nat >= 2^255 > group_order
     }
 }
 

@@ -43,12 +43,22 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
+    // Navigation items — declared early so anchor-click handler below can use them
+    const sections = document.querySelectorAll('section[id]');
+    const navItems = document.querySelectorAll('.nav-links a');
+
     // Smooth scroll for anchor links
     document.querySelectorAll('a[href^="#"]').forEach(anchor => {
         anchor.addEventListener('click', function (e) {
             e.preventDefault();
-            const target = document.querySelector(this.getAttribute('href'));
+            const href = this.getAttribute('href');
+            const target = document.querySelector(href);
             if (target) {
+                // Immediately highlight the clicked link
+                navItems.forEach(item => item.classList.remove('active'));
+                this.classList.add('active');
+                // Update URL hash without jumping
+                history.pushState(null, '', href);
                 target.scrollIntoView({
                     behavior: 'smooth',
                     block: 'start'
@@ -91,8 +101,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Add active state to nav links based on scroll position
-    const sections = document.querySelectorAll('section[id]');
-    const navItems = document.querySelectorAll('.nav-links a');
 
     function highlightNavigation() {
         const scrollY = window.pageYOffset;
@@ -114,6 +122,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     window.addEventListener('scroll', highlightNavigation);
+    highlightNavigation(); // highlight on initial load
 
     // CSV Modal functionality
     let csvFunctionsData = [];
@@ -196,7 +205,7 @@ document.addEventListener('DOMContentLoaded', function() {
         } catch (error) {
             console.error('Error loading CSV:', error);
             document.getElementById('csvTableBody').innerHTML = 
-                '<tr><td colspan="4" class="loading">Error loading data</td></tr>';
+                '<tr><td colspan="5" class="loading">Error loading data</td></tr>';
         }
     }
 
@@ -247,7 +256,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
         
         if (filteredFunctions.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="4" class="loading">No functions match your filters</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="5" class="loading">No functions match your filters</td></tr>';
             return;
         }
         
@@ -266,6 +275,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     <td class="function-module">${displayModule}</td>
                     <td><span class="status-badge status-${status.class}">${status.text}</span></td>
                     <td><a href="${func.link}" target="_blank" class="function-link">View Source →</a></td>
+                    <td><a href="https://beneficial-ai-foundation.github.io/dalek-lite/callgraph/?source=${encodeURIComponent(func.function.replace(/\(.*$/, ''))}&sink=${encodeURIComponent(func.function.replace(/\(.*$/, ''))}" target="_blank" class="function-link">Graph →</a></td>
                 </tr>
             `;
         }).join('');
@@ -322,11 +332,9 @@ document.addEventListener('DOMContentLoaded', function() {
             const stats = await response.json();
             
             // Update hero stats
-            document.getElementById('totalFunctions').textContent = stats.total_functions;
             document.getElementById('withSpecs').textContent = stats.with_specs;
-            document.getElementById('withSpecsPct').textContent = `${stats.with_specs_pct}%`;
             document.getElementById('fullyVerified').textContent = stats.fully_verified;
-            document.getElementById('fullyVerifiedPct').textContent = `${stats.fully_verified_pct}%`;
+            document.getElementById('fullyVerifiedPct').textContent = `${stats.proof_completion_rate}%`;
             
             // Update metrics section
             document.getElementById('specCompletionRate').textContent = `${stats.with_specs_pct}%`;

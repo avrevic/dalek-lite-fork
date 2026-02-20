@@ -13,9 +13,41 @@ use crate::specs::core_specs::*;
 use crate::specs::field_specs_u64::*;
 use crate::specs::montgomery_specs::*;
 
+use crate::montgomery::ProjectivePoint;
 use crate::MontgomeryPoint;
 
 verus! {
+
+/// Swapping the two ladder state points flips the `bit` parameter.
+pub proof fn lemma_ladder_invariant_swap(
+    x0: ProjectivePoint,
+    x1: ProjectivePoint,
+    P: MontgomeryAffine,
+    k: nat,
+    bit: bool,
+)
+    requires
+        montgomery_ladder_invariant(x0, x1, P, k, bit),
+    ensures
+        montgomery_ladder_invariant(x1, x0, P, k, !bit),
+{
+    reveal(montgomery_ladder_invariant);
+    if bit {
+        // bit = true: x0=[k+1]P and x1=[k]P. After swapping, !bit=false expects x1=[k]P and x0=[k+1]P.
+        assert(projective_represents_montgomery_or_infinity(x0, montgomery_scalar_mul(P, k + 1)));
+        assert(projective_represents_montgomery_or_infinity(x1, montgomery_scalar_mul(P, k)));
+        assert(projective_represents_montgomery_or_infinity(x1, montgomery_scalar_mul(P, k)));
+        assert(projective_represents_montgomery_or_infinity(x0, montgomery_scalar_mul(P, k + 1)));
+        assert(montgomery_ladder_invariant(x1, x0, P, k, false));
+    } else {
+        // bit = false: x0=[k]P and x1=[k+1]P. After swapping, !bit=true expects x1=[k+1]P and x0=[k]P.
+        assert(projective_represents_montgomery_or_infinity(x0, montgomery_scalar_mul(P, k)));
+        assert(projective_represents_montgomery_or_infinity(x1, montgomery_scalar_mul(P, k + 1)));
+        assert(projective_represents_montgomery_or_infinity(x1, montgomery_scalar_mul(P, k + 1)));
+        assert(projective_represents_montgomery_or_infinity(x0, montgomery_scalar_mul(P, k)));
+        assert(montgomery_ladder_invariant(x1, x0, P, k, true));
+    }
+}
 
 pub proof fn lemma_zero_limbs_is_zero(point: MontgomeryPoint)
     requires
@@ -24,10 +56,10 @@ pub proof fn lemma_zero_limbs_is_zero(point: MontgomeryPoint)
         spec_montgomery(point) == 0,
 {
     // spec_montgomery(point) ==
-    // spec_field_element_from_bytes(point.0) ==
-    // (bytes32_to_nat(point.0) % pow2(255)) % p() ==
+    // field_element_from_bytes(point.0) ==
+    // (u8_32_as_nat(point.0) % pow2(255)) % p() ==
     // \sum_{i = 0} ^ 31 (bytes[i] as nat) * pow2(i * 8)
-    assert(bytes32_to_nat(&point.0) == 0) by {
+    assert(u8_32_as_nat(&point.0) == 0) by {
         assert forall|i: nat| 0 <= i < 32 implies point.0[i as int] * pow2(i * 8) == 0 by {
             /// trigger requirement:
             assert(point.0[i as int] == 0u8);
