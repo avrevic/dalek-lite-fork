@@ -7,6 +7,10 @@
 
 # Dalek elliptic curve cryptography
 
+[![Ethereum certification — eth_certify](https://github.com/Beneficial-AI-Foundation/eth_certify/actions/workflows/certify-aeneas.yml/badge.svg)](https://github.com/Beneficial-AI-Foundation/eth_certify/actions/workflows/certify-aeneas.yml)
+
+This badge reflects the [**eth_certify**](https://github.com/Beneficial-AI-Foundation/eth_certify) workflow status on the default branch: it is **green** when the latest run completed successfully (all certification steps passed). Example run: [Certify Aeneas Project #4](https://github.com/Beneficial-AI-Foundation/eth_certify/actions/runs/23638893095).
+
 This repo contains pure-Rust crates for elliptic curve cryptography:
 
 |                 Crate                    |   Description  | Crates.io | Docs | CI                                                                                                                                                                                                                          |
